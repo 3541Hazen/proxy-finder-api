@@ -11,6 +11,10 @@ const BLOGS = [
     name: "FutureByte55",
     url: "https://futurebyte55.blogspot.com/",
   },
+  {
+    name: "SportLinkzz",
+    url: "https://sportlinkzz.blogspot.com/",
+  },
 ];
 
 Deno.serve(async (request) => {
