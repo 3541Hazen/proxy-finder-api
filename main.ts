@@ -17,13 +17,6 @@ const BLOGS = [
   },
 ];
 
-const YOUTUBE_CHANNELS = [
-  {
-    name: "UHTech",
-    url: "https://www.youtube.com/@UHTech",
-  },
-];
-
 /* =========================================================
    SERVER
 ========================================================= */
@@ -32,13 +25,10 @@ Deno.serve(async (request) => {
   try {
     const url = new URL(request.url);
 
-    // Fetch blogs and YouTube videos concurrently.
-    const [blogs, youtube] = await Promise.all([
-      Promise.all(BLOGS.map(getBlog)),
-      Promise.all(
-        YOUTUBE_CHANNELS.map(getYouTubeChannel),
-      ),
-    ]);
+    // Fetch blog posts concurrently.
+    const blogs = await Promise.all(
+      BLOGS.map(getBlog),
+    );
 
     /*
      * =======================================================
@@ -52,7 +42,6 @@ Deno.serve(async (request) => {
       return jsonResponse({
         success: true,
         blogs,
-        youtube,
       });
     }
 
@@ -62,24 +51,15 @@ Deno.serve(async (request) => {
      *
      * GET /
      *
-     * Blog URLs first, then YouTube video URLs.
+     * Blog post URLs only.
      * One URL per line.
      * =======================================================
      */
 
     const blogText = formatRawText(blogs);
 
-    const videoURLs = youtube.flatMap((channel) =>
-      channel.videos.map((video) => video.url)
-    );
-
-    const allURLs = [
-      ...blogText.split("\n").filter(Boolean),
-      ...videoURLs,
-    ];
-
     return new Response(
-      [...new Set(allURLs)].join("\n"),
+      blogText,
       {
         headers: {
           "Content-Type": "text/plain; charset=UTF-8",
@@ -218,182 +198,6 @@ async function getBlog(blog: {
         : "Unknown error",
     };
   }
-}
-
-/* =========================================================
-   GET YOUTUBE CHANNEL
-========================================================= */
-
-async function getYouTubeChannel(channel: {
-  name: string;
-  url: string;
-}) {
-  try {
-    /*
-     * Resolve the channel ID from the public channel page.
-     *
-     * The handle itself is not the channel ID.
-     */
-
-    const response = await fetch(channel.url, {
-      method: "GET",
-      redirect: "follow",
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept":
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (!response.ok) {
-      throw new Error(
-        `Could not load channel page: HTTP ${response.status}`,
-      );
-    }
-
-    const html = await response.text();
-
-    /*
-     * YouTube commonly embeds the channel ID as
-     * channelId or externalId.
-     */
-
-    const channelIDMatch =
-      html.match(
-        /"(?:channelId|externalId)"\s*:\s*"(UC[A-Za-z0-9_-]{22})"/,
-      ) ||
-      html.match(
-        /youtube\.com\/channel\/(UC[A-Za-z0-9_-]{22})/,
-      );
-
-    if (!channelIDMatch) {
-      throw new Error(
-        "Could not find the YouTube channel ID. Check the handle or use the channel's /channel/UC... URL.",
-      );
-    }
-
-    const channelID = channelIDMatch[1];
-
-    /*
-     * Fetch YouTube's public Atom feed.
-     *
-     * The feed usually contains the latest uploads.
-     */
-
-    const feedURL =
-      `https://www.youtube.com/feeds/videos.xml?channel_id=${channelID}`;
-
-    const feedResponse = await fetch(feedURL, {
-      method: "GET",
-      redirect: "follow",
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept":
-          "application/atom+xml, application/xml, text/xml",
-      },
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (!feedResponse.ok) {
-      throw new Error(
-        `Could not load YouTube feed: HTTP ${feedResponse.status}`,
-      );
-    }
-
-    const xml = await feedResponse.text();
-
-    if (!/<(?:[\w-]+:)?entry\b/i.test(xml)) {
-      throw new Error(
-        "YouTube feed returned no video entries.",
-      );
-    }
-
-    const videos = parseYouTubeFeed(xml).slice(0, 2);
-
-    return {
-      name: channel.name,
-      channel: channel.url,
-      channelID,
-      videos,
-      count: videos.length,
-      success: true,
-    };
-  } catch (error) {
-    console.error(
-      `[${channel.name}] YouTube error:`,
-      error,
-    );
-
-    return {
-      name: channel.name,
-      channel: channel.url,
-      videos: [],
-      count: 0,
-      success: false,
-      error: error instanceof Error
-        ? error.message
-        : "Unknown error",
-    };
-  }
-}
-
-/* =========================================================
-   PARSE YOUTUBE ATOM FEED
-========================================================= */
-
-function parseYouTubeFeed(xml: string) {
-  const entries =
-    xml.match(
-      /<(?:[\w-]+:)?entry\b[\s\S]*?<\/(?:[\w-]+:)?entry>/gi,
-    ) || [];
-
-  const videos: {
-    title: string;
-    videoId: string;
-    url: string;
-    published: string;
-  }[] = [];
-
-  const seen = new Set<string>();
-
-  for (const entry of entries) {
-    const videoId = clean(
-      getTag(entry, "videoId"),
-    );
-
-    const title = clean(
-      getTag(entry, "title"),
-    );
-
-    const published = clean(
-      getTag(entry, "published"),
-    );
-
-    if (!videoId || seen.has(videoId)) {
-      continue;
-    }
-
-    /*
-     * YouTube video IDs are normally 11 characters.
-     * Validate before constructing the watch URL.
-     */
-
-    if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
-      continue;
-    }
-
-    seen.add(videoId);
-
-    videos.push({
-      title,
-      videoId,
-      url: `https://www.youtube.com/watch?v=${videoId}`,
-      published,
-    });
-  }
-
-  return videos;
 }
 
 /* =========================================================
